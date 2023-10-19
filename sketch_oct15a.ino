@@ -1,72 +1,58 @@
-#include <MIDI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Encoder.h>
+#include <ESP32Encoder.h>
+#include <Ticker.h>  // Bibliothèque Ticker pour gérer les interruptions de temps
 
-// Define the OLED display
+#define CLK 13 // Broche CLK de l'encodeur
+#define DT 15  // Broche DT de l'encodeur
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define OLED_RESET -1
-#define SCREEN_ADDRESS 0x3C
+#define SCREEN_ADDRESS 0x3C  // Adresse I2C de l'écran OLED
 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET, SCREEN_ADDRESS);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+ESP32Encoder encoder;
 
-// Define the MIDI interface using Serial1 (UART1)
-MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
-const int midiOutputChannel = 1;
+int bpm = 120;  // BPM par défaut
+int encoderPos = 0;
+int lastEncoderPos = 0;
 
-// Define the encoder pins
-const int ENC_A_PIN = 2;
-const int ENC_B_PIN = 3;
-Encoder encoder(ENC_A_PIN, ENC_B_PIN);
+Ticker midiClock;  // Ticker pour envoyer les signaux MIDI Clock
 
-// Variables for BPM and timer
-int bpm = 120;
-unsigned long previousMillis = 0;
-const long interval = 60000 / 120;
+void sendMidiClock() {
+  Serial.write(0xF8);  // MIDI Clock
+}
 
 void setup() {
-  if (!display.begin(SCREEN_ADDRESS, OLED_RESET)) {
+  encoder.attachHalfQuad(DT, CLK);
+  encoder.setCount(200);
+  Serial.begin(31250);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println(F("SSD1306 allocation failed"));
     for (;;);
   }
+
   display.display();
   delay(2000);
   display.clearDisplay();
-  MIDI.begin(midiOutputChannel);
-  // Configure Serial1 for MIDI
-  Serial1.begin(31250);  // MIDI operates at a baud rate of 31250
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+
+  // Configuration du Ticker pour envoyer des signaux MIDI Clock à intervalles réguliers
+  int interval = 60000 / (bpm * 24);  // Interval en millisecondes
+  midiClock.attach_ms(interval, sendMidiClock);
 }
 
 void loop() {
-  MIDI.read();
-  int16_t encoderValue = encoder.read();
+  // Lire la position de l'encodeur
+  long newPosition = encoder.getCount() / 2;
+  bpm = map(newPosition, 0, 100, 60, 240) / 2;  // Mappage du BPM en fonction de la position de l'encodeur
 
-  if (encoderValue != 0) {
-    bpm += encoderValue;
-    if (bpm < 30) {
-      bpm = 30;
-    }
-    if (bpm > 240) {
-      bpm = 240;
-    }
-    updateDisplay();
-  }
-
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis >= interval) {
-    // Send MIDI Clock message (0xF8) via UART
-    Serial1.write(0xF8);
-    previousMillis = currentMillis;
-  }
-}
-
-void updateDisplay() {
+  // Mise à jour de l'affichage sur l'écran OLED
   display.clearDisplay();
-  display.setTextSize(1);
   display.setCursor(0, 0);
-  display.print("BPM: ");
-  display.print(bpm);
+  display.printf("BPM: %d\n", bpm);
   display.display();
+
 }
